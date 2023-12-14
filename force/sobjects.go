@@ -37,7 +37,7 @@ func (forceApi *ForceApi) DescribeSObject(ctx context.Context, in SObject) (resp
 		sObjectMetaData, ok := forceApi.apiSObjects[in.ApiName()]
 		if !ok {
 			err = fmt.Errorf("Unable to find metadata for object: %v", in.ApiName())
-			return
+			return nil, err
 		}
 
 		uri := sObjectMetaData.URLs[sObjectDescribeKey]
@@ -45,7 +45,7 @@ func (forceApi *ForceApi) DescribeSObject(ctx context.Context, in SObject) (resp
 		resp = &SObjectDescription{}
 		err = forceApi.Get(ctx, uri, nil, resp)
 		if err != nil {
-			return
+			return nil, err
 		}
 
 		// Create Comma Separated String of All Field Names.
@@ -67,9 +67,11 @@ func (forceApi *ForceApi) DescribeSObject(ctx context.Context, in SObject) (resp
 		}
 
 		forceApi.apiSObjectDescriptions[in.ApiName()] = resp
+
+		return resp, nil
 	}
 
-	return
+	return resp, nil
 }
 
 func (forceApi *ForceApi) GetSObject(ctx context.Context, id string, fields []string, out SObject) (err error) {
