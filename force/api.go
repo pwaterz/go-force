@@ -1,222 +1,146 @@
 package force
 
 import (
+	"bytes"
 	"context"
 	"fmt"
-	"net/http"
-	"sync"
-
-	"golang.org/x/oauth2/jwt"
+	"net/url"
+	"strings"
 )
 
-const (
-	limitsKey          = "limits"
-	queryKey           = "query"
-	queryAllKey        = "queryAll"
-	sObjectsKey        = "sobjects"
-	sObjectKey         = "sobject"
-	sObjectDescribeKey = "describe"
-
-	rowTemplateKey = "rowTemplate"
-	idKey          = "{ID}"
-
-	resourcesUri = "/services/data/%v"
-)
-
-type ForceApi struct {
-	client                 *http.Client
-	jwtConfig              *jwt.Config
-	jwtMutex               sync.Mutex
-	apiVersion             string
-	InstanceURL            string
-	apiResources           map[string]string
-	apiSObjects            map[string]*SObjectMetaData
-	apiSObjectDescriptions map[string]*SObjectDescription
-	apiMaxBatchSize        int64
-	logger                 ForceApiLogger
-	logPrefix              string
-	disableForceAutoAssign bool
+// Interface all standard and custom objects must implement. Needed for uri generation.
+type SObject interface {
+	ApiName() string
+	ExternalIdApiName() string
 }
 
-func (f *ForceApi) SetClient(client *http.Client) {
-	f.client = client
+// Response received from force.com API after insert of an sobject.
+type SObjectResponse struct {
+	Id      string    `force:"id,omitempty"`
+	Errors  ApiErrors `force:"error,omitempty"` //TODO: Not sure if ApiErrors is the right object
+	Success bool      `force:"success,omitempty"`
 }
 
-type SObjectApiResponse struct {
-	Encoding     string             `json:"encoding"`
-	MaxBatchSize int64              `json:"maxBatchSize"`
-	SObjects     []*SObjectMetaData `json:"sobjects"`
-}
-
-type SObjectMetaData struct {
-	Name                string            `json:"name"`
-	Label               string            `json:"label"`
-	KeyPrefix           string            `json:"keyPrefix"`
-	LabelPlural         string            `json:"labelPlural"`
-	Custom              bool              `json:"custom"`
-	Layoutable          bool              `json:"layoutable"`
-	Activateable        bool              `json:"activateable"`
-	URLs                map[string]string `json:"urls"`
-	Searchable          bool              `json:"searchable"`
-	Updateable          bool              `json:"updateable"`
-	Createable          bool              `json:"createable"`
-	DeprecatedAndHidden bool              `json:"deprecatedAndHidden"`
-	CustomSetting       bool              `json:"customSetting"`
-	Deletable           bool              `json:"deletable"`
-	FeedEnabled         bool              `json:"feedEnabled"`
-	Mergeable           bool              `json:"mergeable"`
-	Queryable           bool              `json:"queryable"`
-	Replicateable       bool              `json:"replicateable"`
-	Retrieveable        bool              `json:"retrieveable"`
-	Undeletable         bool              `json:"undeletable"`
-	Triggerable         bool              `json:"triggerable"`
-}
-
-type SObjectDescription struct {
-	Name                string               `json:"name"`
-	Fields              []*SObjectField      `json:"fields"`
-	KeyPrefix           string               `json:"keyPrefix"`
-	Layoutable          bool                 `json:"layoutable"`
-	Activateable        bool                 `json:"activateable"`
-	LabelPlural         string               `json:"labelPlural"`
-	Custom              bool                 `json:"custom"`
-	CompactLayoutable   bool                 `json:"compactLayoutable"`
-	Label               string               `json:"label"`
-	Searchable          bool                 `json:"searchable"`
-	URLs                map[string]string    `json:"urls"`
-	Queryable           bool                 `json:"queryable"`
-	Deletable           bool                 `json:"deletable"`
-	Updateable          bool                 `json:"updateable"`
-	Createable          bool                 `json:"createable"`
-	CustomSetting       bool                 `json:"customSetting"`
-	Undeletable         bool                 `json:"undeletable"`
-	Mergeable           bool                 `json:"mergeable"`
-	Replicateable       bool                 `json:"replicateable"`
-	Triggerable         bool                 `json:"triggerable"`
-	FeedEnabled         bool                 `json:"feedEnabled"`
-	Retrievable         bool                 `json:"retrieveable"`
-	SearchLayoutable    bool                 `json:"searchLayoutable"`
-	LookupLayoutable    bool                 `json:"lookupLayoutable"`
-	Listviewable        bool                 `json:"listviewable"`
-	DeprecatedAndHidden bool                 `json:"deprecatedAndHidden"`
-	RecordTypeInfos     []*RecordTypeInfo    `json:"recordTypeInfos"`
-	ChildRelationsips   []*ChildRelationship `json:"childRelationships"`
-
-	AllFields string `json:"-"` // Not from force.com API. Used to generate SELECT * queries.
-}
-
-type SObjectField struct {
-	Length                   float64          `json:"length"`
-	Name                     string           `json:"name"`
-	Type                     string           `json:"type"`
-	DefaultValue             string           `json:"defaultValue"`
-	RestrictedPicklist       bool             `json:"restrictedPicklist"`
-	NameField                bool             `json:"nameField"`
-	ByteLength               float64          `json:"byteLength"`
-	Precision                float64          `json:"precision"`
-	Filterable               bool             `json:"filterable"`
-	Sortable                 bool             `json:"sortable"`
-	Unique                   bool             `json:"unique"`
-	CaseSensitive            bool             `json:"caseSensitive"`
-	Calculated               bool             `json:"calculated"`
-	Scale                    float64          `json:"scale"`
-	Label                    string           `json:"label"`
-	NamePointing             bool             `json:"namePointing"`
-	Custom                   bool             `json:"custom"`
-	HtmlFormatted            bool             `json:"htmlFormatted"`
-	DependentPicklist        bool             `json:"dependentPicklist"`
-	Permissionable           bool             `json:"permissionable"`
-	ReferenceTo              []string         `json:"referenceTo"`
-	RelationshipOrder        float64          `json:"relationshipOrder"`
-	SoapType                 string           `json:"soapType"`
-	CalculatedValueFormula   string           `json:"calculatedValueFormula"`
-	DefaultValueFormula      string           `json:"defaultValueFormula"`
-	DefaultedOnCreate        bool             `json:"defaultedOnCreate"`
-	Digits                   float64          `json:"digits"`
-	Groupable                bool             `json:"groupable"`
-	Nillable                 bool             `json:"nillable"`
-	InlineHelpText           string           `json:"inlineHelpText"`
-	WriteRequiresMasterRead  bool             `json:"writeRequiresMasterRead"`
-	PicklistValues           []*PicklistValue `json:"picklistValues"`
-	Updateable               bool             `json:"updateable"`
-	Createable               bool             `json:"createable"`
-	DeprecatedAndHidden      bool             `json:"deprecatedAndHidden"`
-	DisplayLocationInDecimal bool             `json:"displayLocationInDecimal"`
-	CascadeDelete            bool             `json:"cascasdeDelete"`
-	RestrictedDelete         bool             `json:"restrictedDelete"`
-	ControllerName           string           `json:"controllerName"`
-	ExternalId               bool             `json:"externalId"`
-	IdLookup                 bool             `json:"idLookup"`
-	AutoNumber               bool             `json:"autoNumber"`
-	RelationshipName         string           `json:"relationshipName"`
-}
-
-type PicklistValue struct {
-	Value       string `json:"value"`
-	DefaulValue bool   `json:"defaultValue"`
-	ValidFor    string `json:"validFor"`
-	Active      bool   `json:"active"`
-	Label       string `json:"label"`
-}
-
-type RecordTypeInfo struct {
-	Name                     string            `json:"name"`
-	Available                bool              `json:"available"`
-	RecordTypeId             string            `json:"recordTypeId"`
-	URLs                     map[string]string `json:"urls"`
-	DefaultRecordTypeMapping bool              `json:"defaultRecordTypeMapping"`
-}
-
-type ChildRelationship struct {
-	Field               string `json:"field"`
-	ChildSObject        string `json:"childSObject"`
-	DeprecatedAndHidden bool   `json:"deprecatedAndHidden"`
-	CascadeDelete       bool   `json:"cascadeDelete"`
-	RestrictedDelete    bool   `json:"restrictedDelete"`
-	RelationshipName    string `json:"relationshipName"`
-}
-
-func (forceApi *ForceApi) getApiResources(ctx context.Context) error {
-	uri := fmt.Sprintf(resourcesUri, forceApi.apiVersion)
-
-	return forceApi.requestNonComposite(ctx, "GET", uri, nil, nil, &forceApi.apiResources, false)
-}
-
-func (forceApi *ForceApi) getApiSObjects(ctx context.Context) error {
-	uri := forceApi.apiResources[sObjectsKey]
-
-	list := &SObjectApiResponse{}
-	err := forceApi.requestNonComposite(ctx, "GET", uri, nil, nil, list, false)
-	if err != nil {
-		return err
+func (forceAPI *ForceApi) DescribeSObjects(ctx context.Context) (map[string]*SObjectMetaData, error) {
+	if err := forceAPI.getApiSObjects(ctx); err != nil {
+		return nil, err
 	}
 
-	forceApi.apiMaxBatchSize = list.MaxBatchSize
-
-	// The API doesn't return the list of sobjects in a map. Convert it.
-	for _, object := range list.SObjects {
-		forceApi.apiSObjects[object.Name] = object
-	}
-
-	return nil
+	return forceAPI.apiSObjects, nil
 }
 
-func (forceApi *ForceApi) getApiSObjectDescriptions(ctx context.Context) error {
-	for name, metaData := range forceApi.apiSObjects {
-		uri := metaData.URLs[sObjectDescribeKey]
-
-		desc := &SObjectDescription{}
-		err := forceApi.Get(ctx, uri, nil, desc)
-		if err != nil {
-			return err
+func (forceApi *ForceApi) DescribeSObject(ctx context.Context, in SObject) (resp *SObjectDescription, err error) {
+	// Check cache
+	resp, ok := forceApi.apiSObjectDescriptions[in.ApiName()]
+	if !ok {
+		// Attempt retrieval from api
+		sObjectMetaData, ok := forceApi.apiSObjects[in.ApiName()]
+		if !ok {
+			err = fmt.Errorf("Unable to find metadata for object: %v", in.ApiName())
+			return nil, err
 		}
 
-		forceApi.apiSObjectDescriptions[name] = desc
+		uri := sObjectMetaData.URLs[sObjectDescribeKey]
+
+		resp = &SObjectDescription{}
+		err = forceApi.Get(ctx, uri, nil, resp)
+		if err != nil {
+			return nil, err
+		}
+
+		// Create Comma Separated String of All Field Names.
+		// Used for SELECT * Queries.
+		length := len(resp.Fields)
+		if length > 0 {
+			var allFields bytes.Buffer
+			for index, field := range resp.Fields {
+				// Field type location cannot be directly retrieved from SQL Query.
+				if field.Type != "location" {
+					if index > 0 && index < length {
+						allFields.WriteString(", ")
+					}
+					allFields.WriteString(field.Name)
+				}
+			}
+
+			resp.AllFields = allFields.String()
+		}
+
+		forceApi.apiSObjectDescriptions[in.ApiName()] = resp
+
+		return resp, nil
 	}
 
-	return nil
+	return resp, nil
 }
 
-func (forceApi *ForceApi) SetDisableForceAutoAssign(value bool) {
-	forceApi.disableForceAutoAssign = value
+func (forceApi *ForceApi) GetSObject(ctx context.Context, id string, fields []string, out SObject) (err error) {
+	uri := strings.Replace(forceApi.apiSObjects[out.ApiName()].URLs[rowTemplateKey], idKey, id, 1)
+
+	params := url.Values{}
+	if len(fields) > 0 {
+		params.Add("fields", strings.Join(fields, ","))
+	}
+
+	err = forceApi.Get(ctx, uri, params, out.(interface{}))
+
+	return
+}
+
+func (forceApi *ForceApi) InsertSObject(ctx context.Context, in SObject) (resp *SObjectResponse, err error) {
+	uri := forceApi.apiSObjects[in.ApiName()].URLs[sObjectKey]
+
+	resp = &SObjectResponse{}
+	err = forceApi.Post(ctx, uri, nil, in.(interface{}), resp)
+
+	return
+}
+
+func (forceApi *ForceApi) UpdateSObject(ctx context.Context, id string, in SObject) (err error) {
+	uri := strings.Replace(forceApi.apiSObjects[in.ApiName()].URLs[rowTemplateKey], idKey, id, 1)
+
+	err = forceApi.Patch(ctx, uri, nil, in.(interface{}), nil)
+
+	return
+}
+
+func (forceApi *ForceApi) DeleteSObject(ctx context.Context, id string, in SObject) (err error) {
+	uri := strings.Replace(forceApi.apiSObjects[in.ApiName()].URLs[rowTemplateKey], idKey, id, 1)
+
+	err = forceApi.Delete(ctx, uri, nil)
+
+	return
+}
+
+func (forceApi *ForceApi) GetSObjectByExternalId(ctx context.Context, id string, fields []string, out SObject) (err error) {
+	uri := fmt.Sprintf("%v/%v/%v", forceApi.apiSObjects[out.ApiName()].URLs[sObjectKey],
+		out.ExternalIdApiName(), id)
+
+	params := url.Values{}
+	if len(fields) > 0 {
+		params.Add("fields", strings.Join(fields, ","))
+	}
+
+	err = forceApi.Get(ctx, uri, params, out.(interface{}))
+
+	return
+}
+
+func (forceApi *ForceApi) UpsertSObjectByExternalId(ctx context.Context, id string, in SObject) (resp *SObjectResponse, err error) {
+	uri := fmt.Sprintf("%v/%v/%v", forceApi.apiSObjects[in.ApiName()].URLs[sObjectKey],
+		in.ExternalIdApiName(), id)
+
+	resp = &SObjectResponse{}
+	err = forceApi.Patch(ctx, uri, nil, in.(interface{}), resp)
+
+	return
+}
+
+func (forceApi *ForceApi) DeleteSObjectByExternalId(ctx context.Context, id string, in SObject) (err error) {
+	uri := fmt.Sprintf("%v/%v/%v", forceApi.apiSObjects[in.ApiName()].URLs[sObjectKey],
+		in.ExternalIdApiName(), id)
+
+	err = forceApi.Delete(ctx, uri, nil)
+
+	return
 }
