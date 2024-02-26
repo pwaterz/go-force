@@ -94,7 +94,7 @@ func (forceApi *ForceApi) request(ctx context.Context, method, path string, para
 	if payload != nil {
 		jsonBytes, err := forcejson.Marshal(payload)
 		if err != nil {
-			return fmt.Errorf("Error marshaling encoded payload: %v", err)
+			return fmt.Errorf("Error marshaling encoded payload: %w", err)
 		}
 		compSubRequest.Body = jsonBytes
 	}
@@ -106,7 +106,7 @@ func (forceApi *ForceApi) request(ctx context.Context, method, path string, para
 
 	jsonBytes, err := json.Marshal(compRequest)
 	if err != nil {
-		return fmt.Errorf("Error marshaling encoded payload: %v", err)
+		return fmt.Errorf("Error marshaling encoded payload: %w", err)
 	}
 	var sfURI bytes.Buffer
 	sfURI.WriteString(forceApi.InstanceURL)
@@ -114,7 +114,7 @@ func (forceApi *ForceApi) request(ctx context.Context, method, path string, para
 
 	req, err := http.NewRequestWithContext(ctx, "POST", sfURI.String(), bytes.NewReader(jsonBytes))
 	if err != nil {
-		return fmt.Errorf("Error creating %v request: %v", method, err)
+		return fmt.Errorf("Error creating %v request: %w", method, err)
 	}
 	// Add Headers
 	req.Header.Set("User-Agent", userAgent)
@@ -138,7 +138,7 @@ func (forceApi *ForceApi) request(ctx context.Context, method, path string, para
 	span.SetTag("http_body", compSubRequest.Body)
 	resp, err := forceApi.client.Do(req)
 	if err != nil {
-		returnErr := fmt.Errorf("Error sending %v request: %v", method, err)
+		returnErr := fmt.Errorf("Error sending %v request: %w", method, err)
 		span.Finish(tracer.WithError(returnErr))
 		return returnErr
 	}
@@ -153,7 +153,7 @@ func (forceApi *ForceApi) request(ctx context.Context, method, path string, para
 
 	respBytes, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
-		return fmt.Errorf("Error reading response bytes: %v", err)
+		return fmt.Errorf("Error reading response bytes: %w", err)
 	}
 	if resp.StatusCode >= 300 {
 		// Attempt to parse response as a force.com api error before returning object unmarshal err
@@ -179,7 +179,7 @@ func (forceApi *ForceApi) request(ctx context.Context, method, path string, para
 	err = json.Unmarshal(respBytes, compResponse)
 	if err != nil {
 		span.Finish(tracer.WithError(err))
-		return fmt.Errorf("Error unmarshaling compsite response: %v", err)
+		return fmt.Errorf("Error unmarshaling compsite response: %w", err)
 	}
 	if len(compResponse.Response) == 0 {
 		return errors.New("sf response is empty")
@@ -208,7 +208,7 @@ func (forceApi *ForceApi) request(ctx context.Context, method, path string, para
 	if objectUnmarshalErr != nil {
 		span.Finish(tracer.WithError(objectUnmarshalErr))
 		// Not a force.com api error. Just an unmarshalling error.
-		return fmt.Errorf("Unable to unmarshal response to object: %v", objectUnmarshalErr)
+		return fmt.Errorf("Unable to unmarshal response to object: %w", objectUnmarshalErr)
 	}
 
 	// Sometimes no response is expected. For example delete and update. We still have to make sure an error wasn't returned.
@@ -231,7 +231,7 @@ func (forceApi *ForceApi) requestNonComposite(ctx context.Context, method, path 
 
 		jsonBytes, err := forcejson.Marshal(payload)
 		if err != nil {
-			return fmt.Errorf("Error marshaling encoded payload: %v", err)
+			return fmt.Errorf("Error marshaling encoded payload: %w", err)
 		}
 
 		body = bytes.NewReader(jsonBytes)
@@ -241,7 +241,7 @@ func (forceApi *ForceApi) requestNonComposite(ctx context.Context, method, path 
 	uriString := uri.String()
 	req, err := http.NewRequestWithContext(ctx, method, uriString, body)
 	if err != nil {
-		return fmt.Errorf("Error creating %v request: %v", method, err)
+		return fmt.Errorf("Error creating %v request: %w", method, err)
 	}
 
 	// Add Headers
@@ -264,7 +264,7 @@ func (forceApi *ForceApi) requestNonComposite(ctx context.Context, method, path 
 	span.SetTag("http_method", method)
 	resp, err := forceApi.client.Do(req)
 	if err != nil {
-		returnErr := fmt.Errorf("Error sending %v request: %v", method, err)
+		returnErr := fmt.Errorf("Error sending %v request: %w", method, err)
 		span.Finish(tracer.WithError(returnErr))
 		return returnErr
 	}
@@ -279,7 +279,7 @@ func (forceApi *ForceApi) requestNonComposite(ctx context.Context, method, path 
 
 	respBytes, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
-		return fmt.Errorf("Error reading response bytes: %v", err)
+		return fmt.Errorf("Error reading response bytes: %w", err)
 	}
 	forceApi.traceResponseBody(respBytes)
 
@@ -309,7 +309,7 @@ func (forceApi *ForceApi) requestNonComposite(ctx context.Context, method, path 
 
 	if objectUnmarshalErr != nil {
 		// Not a force.com api error. Just an unmarshalling error.
-		return fmt.Errorf("Unable to unmarshal response to object: %v", objectUnmarshalErr)
+		return fmt.Errorf("Unable to unmarshal response to object: %w", objectUnmarshalErr)
 	}
 
 	// Sometimes no response is expected. For example delete and update. We still have to make sure an error wasn't returned.
